@@ -19,5 +19,9 @@ export class AccountManager implements IAccountManager {
   removeAccount(id: string): void {
     this.accounts = this.accounts.filter((a) => a.id !== id);
   }
+
+  setAccounts(accounts: IAccount[]): void {
+    this.accounts = accounts;
+  }
 }
 

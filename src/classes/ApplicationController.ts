@@ -6,18 +6,25 @@ import { escapeCsvValue } from '../utils/escapeCsvValue';
 import * as fs from 'fs';
 import * as path from 'path';
 
-type InquirerModule = any;
+type InquirerPrompt = (questions: ReadonlyArray<unknown>) => Promise<Record<string, unknown>>;
+type InquirerModule = {
+  prompt: InquirerPrompt;
+};
 
 export class ApplicationController {
   public readonly accountManager: AccountManager;
+  private readonly dataFilePath: string;
 
   constructor() {
     this.accountManager = new AccountManager();
+    this.dataFilePath = path.resolve(process.cwd(), 'budget-data.json');
   }
 
   private async getInquirer(): Promise<InquirerModule> {
     const mod = await import('inquirer');
-    return (mod as any).default ?? mod;
+    const candidate =
+      (mod as unknown as { default?: InquirerModule }).default ?? (mod as unknown as InquirerModule);
+    return candidate;
   }
 
   public async start(): Promise<void> {
@@ -47,18 +54,19 @@ export class ApplicationController {
         { name: 'Выход', value: 'exit' },
       ];
 
-      const { action } = await inquirer.prompt([
+      const { action } = (await inquirer.prompt([
         {
           type: 'list',
           name: 'action',
           message: 'Выберите счёт или действие:',
           choices,
         },
-      ]);
+      ])) as { action: string };
 
       if (action === 'create') {
         await this.createAccount();
       } else if (action === 'exit') {
+        await this.saveState();
         console.log('\nДо свидания!');
         break;
       } else {
@@ -70,17 +78,86 @@ export class ApplicationController {
   public async createAccount(): Promise<void> {
     const inquirer = await this.getInquirer();
     console.clear();
-    const { name } = await inquirer.prompt([
+    const { name } = (await inquirer.prompt([
       {
         type: 'input',
         name: 'name',
         message: 'Введите название нового счёта:',
         validate: (input: string) => (input.trim().length === 0 ? 'Название не может быть пустым' : true),
       },
-    ]);
+    ])) as { name: string };
 
     const account = new Account(name.trim());
     this.accountManager.addAccount(account);
+  }
+
+  public async loadState(): Promise<void> {
+    if (!fs.existsSync(this.dataFilePath)) {
+      return;
+    }
+
+    try {
+      const raw = fs.readFileSync(this.dataFilePath, { encoding: 'utf8' });
+      if (!raw.trim()) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        accounts?: {
+          name: string;
+          transactions?: {
+            amount: number;
+            type: TransactionType;
+            date: string;
+            description: string;
+          }[];
+        }[];
+      };
+
+      const loadedAccounts: Account[] = [];
+      if (parsed.accounts && Array.isArray(parsed.accounts)) {
+        for (const accData of parsed.accounts) {
+          const acc = new Account(accData.name);
+          if (accData.transactions && Array.isArray(accData.transactions)) {
+            for (const t of accData.transactions) {
+              acc.addTransaction(
+                new Transaction(t.amount, t.type, t.date, t.description)
+              );
+            }
+          }
+          loadedAccounts.push(acc);
+        }
+      }
+
+      if (loadedAccounts.length > 0) {
+        this.accountManager.setAccounts(loadedAccounts);
+      }
+    } catch (err) {
+      console.error('Не удалось загрузить данные из файла:', err);
+    }
+  }
+
+  public async saveState(): Promise<void> {
+    const accounts = this.accountManager.getAccounts();
+    const plain = accounts.map((acc) => ({
+      name: acc.name,
+      transactions: acc.transactions.map((t) => ({
+        amount: t.amount,
+        type: t.type,
+        date: t.date,
+        description: t.description,
+      })),
+    }));
+
+    const data = { accounts: plain };
+
+    try {
+      fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), {
+        encoding: 'utf8',
+      });
+    } catch (err) {
+      console.error('Не удалось сохранить данные в файл:', err);
+    }
   }
 
   public async watchAccount(accountId: string): Promise<void> {
@@ -107,7 +184,7 @@ export class ApplicationController {
         console.log();
       }
 
-      const { action } = await inquirer.prompt([
+      const { action } = (await inquirer.prompt([
         {
           type: 'list',
           name: 'action',
@@ -120,7 +197,7 @@ export class ApplicationController {
             { name: 'Вернуться к списку счетов', value: 'back' },
           ],
         },
-      ]);
+      ])) as { action: string };
 
       if (action === 'add') {
         await this.addTransaction(account.id);
@@ -148,18 +225,19 @@ export class ApplicationController {
       return false;
     }
 
-    const { confirm } = await inquirer.prompt([
+    const { confirm } = (await inquirer.prompt([
       {
         type: 'confirm',
         name: 'confirm',
         message: `Удалить счёт "${account.name}" и все его транзакции?`,
         default: false,
       },
-    ]);
+    ])) as { confirm: boolean };
 
     if (confirm) {
       this.accountManager.removeAccount(accountId);
       console.log('Счёт удалён.');
+      await this.saveState();
       await inquirer.prompt([{ type: 'input', name: 'pause', message: 'Нажмите Enter, чтобы продолжить.' }]);
       return true;
     }
@@ -178,7 +256,7 @@ export class ApplicationController {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    const answers = await inquirer.prompt([
+    const answers = (await inquirer.prompt([
       {
         type: 'input',
         name: 'amount',
@@ -219,13 +297,19 @@ export class ApplicationController {
         message: 'Описание транзакции:',
         default: '',
       },
-    ]);
+    ])) as {
+      amount: string;
+      type: TransactionType;
+      date: string;
+      description: string;
+    };
 
     const amount = Number(answers.amount.replace(',', '.'));
     const isoDate = new Date(answers.date || today).toISOString();
 
     const transaction = new Transaction(amount, answers.type, isoDate, answers.description.trim());
     account.addTransaction(transaction);
+    await this.saveState();
   }
 
   public async removeTransaction(accountId: string): Promise<void> {
@@ -243,7 +327,7 @@ export class ApplicationController {
       return;
     }
 
-    const { transactionId } = await inquirer.prompt([
+    const { transactionId } = (await inquirer.prompt([
       {
         type: 'list',
         name: 'transactionId',
@@ -253,20 +337,21 @@ export class ApplicationController {
           value: t.id,
         })),
       },
-    ]);
+    ])) as { transactionId: string };
 
-    const { confirm } = await inquirer.prompt([
+    const { confirm } = (await inquirer.prompt([
       {
         type: 'confirm',
         name: 'confirm',
         message: 'Вы уверены, что хотите удалить эту транзакцию?',
         default: false,
       },
-    ]);
+    ])) as { confirm: boolean };
 
     if (confirm) {
       account.removeTransaction(transactionId);
       console.log('Транзакция удалена.');
+      await this.saveState();
       await inquirer.prompt([{ type: 'input', name: 'pause', message: 'Нажмите Enter, чтобы продолжить.' }]);
     }
   }
@@ -286,14 +371,14 @@ export class ApplicationController {
       return;
     }
 
-    const { fileName } = await inquirer.prompt([
+    const { fileName } = (await inquirer.prompt([
       {
         type: 'input',
         name: 'fileName',
         message: 'Введите имя файла (без расширения):',
         validate: (input: string) => (input.trim().length === 0 ? 'Имя файла не может быть пустым' : true),
       },
-    ]);
+    ])) as { fileName: string };
 
     const safeName = fileName.trim();
     const filePath = path.resolve(process.cwd(), `${safeName}.csv`);
