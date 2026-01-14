@@ -1,0 +1,25 @@
+{
+  "name": "budget-tracker-cli",
+  "version": "1.0.0",
+  "description": "CLI-приложение для управления личными финансами на TypeScript с использованием inquirer.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "typescript",
+    "cli",
+    "budget",
+    "inquirer"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/inquirer": "^9.0.9",
+    "@types/node": "^25.0.8",
+    "inquirer": "^12.11.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
