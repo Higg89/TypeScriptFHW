@@ -33,7 +33,14 @@ function setInitialState(controller: ApplicationController): void {
 
 async function main(): Promise<void> {
   const controller = new ApplicationController();
-  setInitialState(controller);
+
+  await controller.loadState();
+  
+  if (controller.accountManager.getAccounts().length === 0) {
+    setInitialState(controller);
+    await controller.saveState();
+  }
+  
   await controller.start();
 }
 

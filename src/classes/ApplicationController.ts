@@ -89,6 +89,7 @@ export class ApplicationController {
 
     const account = new Account(name.trim());
     this.accountManager.addAccount(account);
+    await this.saveState();
   }
 
   public async loadState(): Promise<void> {
